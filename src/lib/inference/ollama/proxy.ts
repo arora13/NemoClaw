@@ -13,7 +13,13 @@
 
 import type { GpuInfo } from "../local";
 import type { PulledModelDiscoveryDeps } from "./model-discovery";
-import type { ProxyBackendKind } from "./proxy-status";
+import {
+  readProxyBackendIdentity,
+  readProxyStateFile,
+  type StoredProxyBackendKind,
+  type ProxyBackendDescriptor,
+  type ProxyBackendIdentity,
+} from "./proxy-backend";
 
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
@@ -66,7 +72,6 @@ const {
   withMcpLifecycleLock,
   withMcpLifecycleLockSync,
 } = require("../../state/mcp-lifecycle-lock");
-const { openRegularFileNoFollow } = require("../../adapters/fs/regular-file");
 const {
   assertNoAuthProxyEndpointEligible,
   formatOllamaProxyUnreachableMessage,
@@ -102,18 +107,6 @@ const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 const PROXY_STATUS_PATH = defaultProxyStatusPath(PROXY_STATE_DIR);
 const OLLAMA_PROXY_LIFECYCLE_LOCK = "host-global-ollama-auth-proxy";
 const OLLAMA_MODEL_OWNERSHIP_LOCK = "host-global-ollama-model-ownership";
-const MAX_PROXY_STATE_FILE_BYTES = 64 * 1024;
-
-type StoredProxyBackendKind = Exclude<ProxyBackendKind, "unknown">;
-type ProxyBackendDescriptor = {
-  readonly schemaVersion: 1;
-  readonly kind: StoredProxyBackendKind;
-  readonly url: string;
-};
-type ProxyBackendIdentity = {
-  readonly kind: ProxyBackendKind;
-  readonly url: string | null;
-};
 
 let ollamaProxyToken: string | null = null;
 
@@ -174,47 +167,6 @@ function persistProxyToken(
   backendKind: StoredProxyBackendKind = "ollama",
 ): void {
   withOllamaProxyLifecycleLock(() => persistProxyTokenUnlocked(token, backendUrl, backendKind));
-}
-
-function readProxyStateFile(filePath: string): string | null {
-  let opened;
-  try {
-    opened = openRegularFileNoFollow(filePath);
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw new Error(`Cannot safely read Ollama auth proxy state at ${filePath}`, { cause: error });
-  }
-  try {
-    return opened.readBytes(MAX_PROXY_STATE_FILE_BYTES).toString("utf8").trim() || null;
-  } finally {
-    opened.close();
-  }
-}
-
-function parseProxyBackendDescriptor(raw: string | null): ProxyBackendDescriptor | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (
-      parsed?.schemaVersion !== 1 ||
-      (parsed.kind !== "ollama" && parsed.kind !== "compatible-endpoint") ||
-      typeof parsed.url !== "string" ||
-      parsed.url.trim().length === 0
-    ) {
-      return null;
-    }
-    return { schemaVersion: 1, kind: parsed.kind, url: parsed.url };
-  } catch {
-    return null;
-  }
-}
-
-function readProxyBackendIdentity(root = PROXY_STATE_DIR): ProxyBackendIdentity {
-  const url = readProxyStateFile(path.join(root, "ollama-backend"));
-  const descriptor = parseProxyBackendDescriptor(
-    readProxyStateFile(path.join(root, "ollama-backend.json")),
-  );
-  return descriptor?.url === url ? { kind: descriptor.kind, url } : { kind: "unknown", url };
 }
 
 function commonKnownBackendKind(

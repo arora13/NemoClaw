@@ -31,8 +31,8 @@ import {
   cloneSandboxHostLocalInferenceProvenance,
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
-  nativeLocalAttachmentMatchesSelectedEndpoint,
-} from "../state/registry/host-local-inference";
+} from "../state/registry";
+import { nativeLocalAttachmentMatchesSelectedEndpoint } from "./inference-providers/native-local-attachment";
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import {
   retainedNativeLocalProviderAttachment,
@@ -268,6 +268,11 @@ export function buildCreatedSandboxRegistryEntry(
         input.inferenceSelection.endpointUrl,
         nativeLocalProviderAttachment.endpointUrl,
         hostLocalInferenceReceipt,
+        {
+          selected: input.inferenceSelection.credentialEnv,
+          attachment: nativeLocalProviderAttachment.credentialEnv,
+          authMode: nativeLocalProviderAttachment.authMode,
+        },
       )
     )
   ) {

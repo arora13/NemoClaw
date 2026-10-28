@@ -28,6 +28,37 @@ const RUNNER_DIST = require.resolve("../../runner");
 const SUBPROCESS_ENV_DIST = require.resolve("../../subprocess-env");
 const LIFECYCLE_DIST = require.resolve("../local-adapter-lifecycle");
 
+it("recognizes a proxy backend only when its saved descriptor matches", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "proxy-backend-identity-"));
+  const { readProxyBackendIdentity } =
+    require("./proxy-backend") as typeof import("./proxy-backend");
+  try {
+    expect(readProxyBackendIdentity(directory)).toEqual({ kind: "unknown", url: null });
+    fs.writeFileSync(path.join(directory, "ollama-backend"), "http://localhost:8000\n");
+    fs.writeFileSync(
+      path.join(directory, "ollama-backend.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "compatible-endpoint",
+        url: "http://localhost:8000",
+      }),
+    );
+    expect(readProxyBackendIdentity(directory)).toEqual({
+      kind: "compatible-endpoint",
+      url: "http://localhost:8000",
+    });
+    fs.writeFileSync(path.join(directory, "ollama-backend"), "http://localhost:11434\n");
+    expect(readProxyBackendIdentity(directory)).toEqual({
+      kind: "unknown",
+      url: "http://localhost:11434",
+    });
+    fs.writeFileSync(path.join(directory, "ollama-backend.json"), "invalid json");
+    expect(readProxyBackendIdentity(directory).kind).toBe("unknown");
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 interface MockSetup {
   installed: string[] | (() => string[]);
   promptValues: string[];

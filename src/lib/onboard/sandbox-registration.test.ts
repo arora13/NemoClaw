@@ -956,6 +956,66 @@ describe("Hermes native attachment registration", () => {
       },
     });
   };
+  const makeProxyInput = () => {
+    const proxy = requireDist(
+      "../inference/ollama/proxy-backend",
+    ) as typeof import("../inference/ollama/proxy-backend");
+    vi.spyOn(proxy, "readProxyBackendIdentity").mockReturnValue({
+      kind: "compatible-endpoint",
+      url: "http://localhost:8000",
+    });
+    const { nativeLocalIdentity } = requireDist(
+      "../inference/native-local/contract.ts",
+    ) as typeof import("../inference/native-local/contract");
+    const input = makeInput("hermes", "demo", "http://host.openshell.internal:11435/v1");
+    const credentialEnv = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
+    const binding = { ...input.nativeLocalProviderAttachment!, credentialEnv };
+    input.nativeLocalProviderAttachment = { ...binding, ...nativeLocalIdentity(binding) };
+    input.inferenceSelection = {
+      ...input.inferenceSelection,
+      endpointUrl: "http://localhost:8000/v1",
+      credentialEnv,
+    };
+
+    return input;
+  };
+  it("registers a no-auth Hermes endpoint through its protected proxy", () => {
+    const input = makeProxyInput();
+    const { normalizeNativeLocalProviderAttachment } = requireDist(
+      "../inference/native-local/contract.ts",
+    ) as typeof import("../inference/native-local/contract");
+    expect(normalizeNativeLocalProviderAttachment(input.nativeLocalProviderAttachment)).toEqual(
+      input.nativeLocalProviderAttachment,
+    );
+    const registered = buildCreatedSandboxRegistryEntry(input);
+    expect(registered.endpointUrl).toBe("http://localhost:8000/v1");
+    expect(registered.credentialEnv).toBe("NEMOCLAW_OLLAMA_PROXY_TOKEN");
+    expect(registered.nativeLocalProviderAttachment).toEqual(input.nativeLocalProviderAttachment);
+  });
+  it.each([
+    { name: "wrong credential", changes: { credentialEnv: "OTHER_TOKEN" } },
+    { name: "sibling sandbox", changes: { sandboxName: "sibling" } },
+    { name: "different gateway", changes: { gatewayName: "other" } },
+    { name: "different agent", changes: { agent: "pi" as const } },
+  ])("rejects a proxy attachment with $name", ({ changes }) => {
+    const input = makeProxyInput();
+    const { nativeLocalIdentity } = requireDist(
+      "../inference/native-local/contract.ts",
+    ) as typeof import("../inference/native-local/contract");
+    const binding = { ...input.nativeLocalProviderAttachment!, ...changes };
+    input.nativeLocalProviderAttachment = { ...binding, ...nativeLocalIdentity(binding) };
+    expect(() => buildCreatedSandboxRegistryEntry(input)).toThrow("does not match");
+  });
+  it("rejects a proxy attachment with a forged profile identity", () => {
+    const input = makeProxyInput();
+    input.nativeLocalProviderAttachment = {
+      ...input.nativeLocalProviderAttachment!,
+      profileId: "forged-profile",
+    };
+    expect(() => buildCreatedSandboxRegistryEntry(input)).toThrow(
+      "Invalid native local provider attachment",
+    );
+  });
   it.each(["localhost", "127.0.0.1", "[::1]"])(
     "retains the raw %s selection and its gateway-mapped Hermes attachment",
     (host) => {

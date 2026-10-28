@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { patchHermesInferenceConfig } from "../../actions/inference-set";
 import { applyHermesManagedRoute } from "../../hermes-managed-route";
 import { nativeLocalIdentity } from "../../inference/native-local/contract";
+import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { gatewayReachableCompatibleEndpointUrl } from "../inference-providers/compatible-endpoint-gateway-route";
 import { hostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import { serializeHostLocalInferenceReceipt } from "../runtime-provider/host-local-inference";
@@ -14,6 +16,8 @@ import {
   createInitialHermesInferenceRoute,
   type InitialHermesInferenceRouteDeps,
 } from "./initial-inference-route";
+
+import * as proxy from "../../inference/ollama/proxy-backend";
 
 const issued = (scope: string) => `openshell:resolve:env:${scope}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`;
 const digest = Symbol("matching read digest");
@@ -153,6 +157,39 @@ function bridgeFixture() {
 }
 
 describe("external Hermes initial native-local route", () => {
+  const proxyFixture = () => {
+    const endpoint = `http://host.openshell.internal:${OLLAMA_PROXY_PORT}/v1`;
+    const f = fixture("compatible-endpoint", endpoint);
+    const binding = { ...f.receipt, credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV };
+    f.entry.nativeLocalProviderAttachment = { ...binding, ...nativeLocalIdentity(binding) };
+    f.entry.endpointUrl = "http://localhost:8000/v1";
+    f.entry.credentialEnv = OLLAMA_LOCAL_CREDENTIAL_ENV;
+    const backend = vi.spyOn(proxy, "readProxyBackendIdentity").mockReturnValue({
+      kind: "compatible-endpoint",
+      url: "http://localhost:8000",
+    });
+    return { ...f, backend, endpoint };
+  };
+  it("projects the protected proxy route for its recorded backend", async () => {
+    const f = proxyFixture();
+    await f.run();
+    expect(f.config.model).toMatchObject({ base_url: f.endpoint, api_key: issued("v7") });
+    expect(f.deps.readCredentialHandle).toHaveBeenCalledWith(
+      "alpha",
+      "gateway-a",
+      f.entry.nativeLocalProviderAttachment,
+    );
+  });
+  it("rejects a proxy backend changed while reading the issued credential", async () => {
+    const f = proxyFixture();
+    vi.mocked(f.deps.readCredentialHandle).mockImplementation(async () => {
+      f.backend.mockReturnValue({ kind: "compatible-endpoint", url: "http://localhost:11434" });
+      return issued("v7");
+    });
+    await expect(f.run()).rejects.toThrow("does not match");
+    expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(f.deps.restartGateway).not.toHaveBeenCalled();
+  });
   it.each(["localhost", "127.0.0.1", "[::1]"])(
     "projects a compatible %s endpoint using the producer's gateway mapping",
     async (host) => {
